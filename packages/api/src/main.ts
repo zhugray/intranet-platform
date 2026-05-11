@@ -48,6 +48,9 @@ async function bootstrap() {
     logger.log('📚 Swagger docs: http://localhost:4000/api/docs');
   }
 
+  // Health check for Render (before NestJS routing)
+  app.use('/health', (_req: any, res: any) => res.status(200).json({ status: 'ok' }));
+
   const port = process.env.PORT || 4000;
   await app.listen(port);
   logger.log(`🚀 API Server running on http://localhost:${port}`);
