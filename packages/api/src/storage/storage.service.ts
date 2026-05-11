@@ -13,7 +13,7 @@ export class StorageService implements OnModuleInit {
 
   constructor(private config: ConfigService) {
     const endpoint = this.config.get<string>('MINIO_ENDPOINT', 'localhost');
-    const port = this.config.get<number>('MINIO_PORT', 9000);
+    const port = parseInt(this.config.get<string>('MINIO_PORT', '9000'), 10);
     const useSSL = this.config.get<string>('MINIO_USE_SSL', 'false') === 'true';
 
     this.bucket = this.config.get<string>('MINIO_BUCKET', 'intranet-docs');

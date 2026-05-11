@@ -56,4 +56,7 @@ async function bootstrap() {
   logger.log(`🚀 API Server running on http://localhost:${port}`);
 }
 
-bootstrap();
+bootstrap().catch((err) => {
+  console.error('Fatal bootstrap error:', err?.message ?? err);
+  process.exit(1);
+});
