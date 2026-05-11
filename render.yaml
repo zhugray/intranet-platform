@@ -13,9 +13,9 @@ services:
     region: oregon
     rootDir: packages/api
     # NODE_ENV=development during install so devDeps (prisma CLI, ts-node) are included
+    # preDeployCommand is NOT supported on free plan — migrations run in startCommand instead
     buildCommand: NODE_ENV=development npm ci && npx prisma generate && npm run build
-    preDeployCommand: npx prisma migrate deploy && npx prisma db seed
-    startCommand: node dist/main
+    startCommand: npx prisma migrate deploy && ./node_modules/.bin/ts-node prisma/seed.ts && node dist/main
     healthCheckPath: /health
     envVars:
       - key: NODE_ENV
