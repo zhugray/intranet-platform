@@ -30,7 +30,8 @@ SYSTEM_PROMPT = """You are a company internal knowledge assistant, specializing 
 class RAGService:
     def __init__(self):
         self.openai = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-        self.qdrant = AsyncQdrantClient(url=os.getenv("QDRANT_URL", "http://localhost:6333"))
+        qdrant_url = os.getenv("QDRANT_URL", "")
+        self.qdrant = AsyncQdrantClient(url=qdrant_url, timeout=3) if qdrant_url else None
         self.collection = os.getenv("QDRANT_COLLECTION", "intranet_docs")
         self.model = os.getenv("AI_MODEL", "gpt-4o")
         self.embedding_model = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
@@ -96,6 +97,9 @@ class RAGService:
                 )
             ]
         )
+
+        if not self.qdrant:
+            return []
 
         try:
             result = await self.qdrant.query_points(

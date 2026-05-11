@@ -40,7 +40,8 @@ except ImportError:
 class VectorizerService:
     def __init__(self):
         self.openai = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-        self.qdrant = AsyncQdrantClient(url=os.getenv("QDRANT_URL", "http://localhost:6333"))
+        qdrant_url = os.getenv("QDRANT_URL", "")
+        self.qdrant = AsyncQdrantClient(url=qdrant_url, timeout=5) if qdrant_url else None
         self.collection = os.getenv("QDRANT_COLLECTION", "intranet_docs")
         self.embedding_model = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
         self.chunk_size = int(os.getenv("RAG_CHUNK_SIZE", "512"))
@@ -72,6 +73,10 @@ class VectorizerService:
         dept_name: str = "",
     ):
         """Main processing pipeline."""
+        if not self.qdrant:
+            logger.warning(f"Qdrant not configured — skipping vectorization for {doc_id}")
+            return
+
         try:
             logger.info(f"Processing document: {doc_id}")
 
