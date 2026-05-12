@@ -94,11 +94,13 @@ services:
           name: intranet-api
           type: web
           envVarKey: INTERNAL_TOKEN
+      # PostgreSQL with pgvector — same DB as the API
+      - key: DATABASE_URL
+        fromDatabase:
+          name: intranet-db
+          property: connectionString
       # ── OpenAI — fill in Render dashboard after deploy ────────────────────
       - key: OPENAI_API_KEY
-        sync: false
-      # ── Qdrant Cloud — fill in Render dashboard after deploy ──────────────
-      - key: QDRANT_URL
         sync: false
       - key: QDRANT_COLLECTION
         value: intranet_docs

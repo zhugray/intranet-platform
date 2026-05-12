@@ -1,6 +1,6 @@
 """
 RAG (Retrieval-Augmented Generation) service
-Flow: question → embed → Qdrant retrieval → rerank → OpenAI generate answer
+Flow: question → embed → pgvector retrieval → OpenAI generate answer
 """
 
 import os
@@ -8,8 +8,8 @@ import uuid
 import logging
 from typing import Optional
 from openai import AsyncOpenAI
-from qdrant_client import AsyncQdrantClient
-from qdrant_client.models import Filter, FieldCondition, MatchAny
+import psycopg
+from pgvector.psycopg import register_vector_async
 
 logger = logging.getLogger(__name__)
 
@@ -30,8 +30,7 @@ SYSTEM_PROMPT = """You are a company internal knowledge assistant, specializing 
 class RAGService:
     def __init__(self):
         self.openai = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-        qdrant_url = os.getenv("QDRANT_URL", "")
-        self.qdrant = AsyncQdrantClient(url=qdrant_url, timeout=3) if qdrant_url else None
+        self.db_url = os.getenv("DATABASE_URL", "")
         self.collection = os.getenv("QDRANT_COLLECTION", "intranet_docs")
         self.model = os.getenv("AI_MODEL", "gpt-4o")
         self.embedding_model = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
@@ -77,7 +76,6 @@ class RAGService:
         }
 
     async def _embed(self, text: str) -> list[float]:
-        """Embed text into a vector."""
         response = await self.openai.embeddings.create(
             model=self.embedding_model,
             input=text,
@@ -85,50 +83,38 @@ class RAGService:
         return response.data[0].embedding
 
     async def _retrieve(self, query_vector: list[float], dept_ids: list[str]) -> list:
-        """Retrieve relevant chunks from Qdrant, filtered by department access."""
-        if not dept_ids:
-            return []
-
-        search_filter = Filter(
-            must=[
-                FieldCondition(
-                    key="dept_id",
-                    match=MatchAny(any=dept_ids),
-                )
-            ]
-        )
-
-        if not self.qdrant:
+        if not dept_ids or not self.db_url:
             return []
 
         try:
-            result = await self.qdrant.query_points(
-                collection_name=self.collection,
-                query=query_vector,
-                query_filter=search_filter,
-                limit=self.top_k,
-                with_payload=True,
-                score_threshold=0.2,
-            )
-            return result.points
+            async with await psycopg.AsyncConnection.connect(self.db_url) as conn:
+                await register_vector_async(conn)
+                rows = await conn.execute(
+                    """
+                    SELECT doc_id, title, dept_name, chunk_index, text,
+                           1 - (embedding <=> %s::vector) AS score
+                    FROM document_vectors
+                    WHERE dept_id = ANY(%s)
+                      AND 1 - (embedding <=> %s::vector) > 0.2
+                    ORDER BY embedding <=> %s::vector
+                    LIMIT %s
+                    """,
+                    (query_vector, dept_ids, query_vector, query_vector, self.top_k),
+                )
+                return rows.fetchall()
         except Exception as e:
-            logger.error(f"Qdrant query error: {e}")
+            logger.error(f"pgvector query error: {e}")
             return []
 
     def _build_context(self, chunks: list) -> tuple[str, list]:
-        """Build LLM context text and source citation list."""
         context_parts = []
         sources = []
         seen_docs = set()
 
-        for i, chunk in enumerate(chunks[: self.rerank_top_n], 1):
-            payload = chunk.payload
-            doc_id = payload.get("doc_id")
-            title = payload.get("title", "Unknown Document")
-            dept_name = payload.get("dept_name", "Unknown Department")
-            text = payload.get("text", "")
+        for i, row in enumerate(chunks[: self.rerank_top_n], 1):
+            doc_id, title, dept_name, chunk_index, text, score = row
 
-            context_parts.append(f"[{i}] \"{title}\" ({dept_name})\n{text}")
+            context_parts.append(f'[{i}] "{title}" ({dept_name})\n{text}')
 
             if doc_id not in seen_docs:
                 seen_docs.add(doc_id)
@@ -138,14 +124,13 @@ class RAGService:
                     "title": title,
                     "dept_name": dept_name,
                     "excerpt": text[:120] + ("..." if len(text) > 120 else ""),
-                    "score": round(chunk.score, 3),
+                    "score": round(score, 3),
                 })
 
         context = "\n\n---\n\n".join(context_parts)
         return context, sources
 
     def _build_messages(self, history: list[dict], question: str, context: str) -> list[dict]:
-        """Build OpenAI messages format with system prompt and conversation history."""
         messages = [{"role": "system", "content": SYSTEM_PROMPT.format(context=context)}]
 
         for turn in history[-6:]:
